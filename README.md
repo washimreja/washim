@@ -1,2 +1,3 @@
 # washim
-this is my first Git
+Are bhai is my first Git
+Author -washim
