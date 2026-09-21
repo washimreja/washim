@@ -24,15 +24,27 @@ import { Button } from "@/components/ui/button";
 import { useWeather } from "@/hooks/useWeather";
 import { useAuth } from "@/context/AuthContext";
 import { deriveAlerts } from "@/lib/alerts";
-import { describeWeather } from "@/lib/weather";
+import { browserLocation, describeWeather, searchPlaces } from "@/lib/weather";
 import { formatClock, formatDay, formatTemp, formatTempFull, formatWind, comfortLabel, relativeTime } from "@/lib/format";
 import { placeLabel } from "@/lib/store";
 import type { GeoPlace, WeatherData, WeatherAlert } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+// Sensible default so a first-run dashboard always has a sky to show.
+const FALLBACK_PLACE: GeoPlace = {
+  id: 0,
+  name: "Dhaka",
+  admin1: "Dhaka",
+  country: "Bangladesh",
+  countryCode: "BD",
+  latitude: 23.8103,
+  longitude: 90.4125,
+};
+
 export default function Overview() {
   const { user, updateProfile } = useAuth();
   const [place, setPlace] = useState(user?.homePlace ?? null);
+  const [autoResolving, setAutoResolving] = useState(!user?.homePlace);
   const { data, loading, error, refresh } = useWeather(place);
 
   // keep local state in sync when profile changes externally
@@ -40,7 +52,34 @@ export default function Overview() {
     if (user?.homePlace) setPlace(user.homePlace);
   }, [user?.homePlace]);
 
+  // First run with no home set: auto-resolve a starting location (GPS,
+  // then a default city) so the dashboard never sits in an eternal skeleton.
+  useEffect(() => {
+    if (!autoResolving) return;
+    let cancelled = false;
+    void (async () => {
+      let resolved = await browserLocation();
+      if (cancelled) return;
+      if (!resolved) {
+        try {
+          resolved = (await searchPlaces("Dhaka", 1))[0] ?? null;
+        } catch {
+          resolved = null;
+        }
+      }
+      if (cancelled) return;
+      const finalPlace = resolved ?? FALLBACK_PLACE;
+      setAutoResolving(false);
+      setPlace(finalPlace);
+      updateProfile((prev) => ({ ...prev, homePlace: finalPlace }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoResolving, updateProfile]);
+
   function chooseHome(p: GeoPlace) {
+    setAutoResolving(false); // a manual pick wins over any in-flight auto-resolve
     setPlace(p);
     updateProfile((prev) => ({ ...prev, homePlace: p }));
   }
@@ -68,7 +107,11 @@ export default function Overview() {
         <div>
           <h1 className="font-display text-2xl font-bold">Overview</h1>
           <p className="text-sm text-white/50">
-            {data ? `Live conditions for ${data.place.name} · updated ${relativeTime(data.fetchedAt)}` : "Loading your sky…"}
+            {data
+              ? `Live conditions for ${data.place.name} · updated ${relativeTime(data.fetchedAt)}`
+              : autoResolving
+                ? "Finding your location…"
+                : "Loading your sky…"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
